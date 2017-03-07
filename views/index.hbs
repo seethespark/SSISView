@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini SSIS activity viewer</title>
+
+    <style>
+      body { font-family: Helvetica, Arial; font-size: 10px; margin: 0; padding: 0;}
+      table { border-collapse: separate; border-spacing: 10px 5px; width: 100%; }
+      th { max-width: 420px; overflow: hidden; padding: 2px 6px; background-color: #7bc2fc; border: 1px solid #ddd; }
+      td { max-width: 420px; overflow: hidden; padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; }
+      tr:nth-child(even) {background-color: #f2f2f2}
+      tr:hover {background-color: #eaeaea}
+      .tableWrap { width: 100%; overflow-x:auto; }
+      .collapse { display: none; }
+      @media (min-width: 740px) {
+
+        body { font-size: 16px; }
+        .tableWrap { max-width: 90%; display: inline-block; overflow-x:auto; vertical-align: top;}
+      }
+
+      @media (min-width: 1040px) {
+        .tableWrap { max-width: calc( 100% - 400px); } 
+        #charts { position: absolute; top: 15px; right: 0px; }
+      }
+
+    </style>
+    </head>
+    <body>
+      <input type="button" id="btnSuspend" value="Suspend updates">
+      <br>
+      <div class="tableWrap">
+        <table id="consoleview">
+          <thead>
+            <tr><th>Event</th><th>Computer</th><th>Operator</th><th>Start</th><th>Data code</th>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+    <script src="/js/stsUtils.js"></script>
+    <script>
+    var suspendUpdates;
+    if (window.EventSource === undefined) {
+      alert("This does not work with your browser.  Please use Firefox, Chrome or Safari.");
+    }
+    var pageEvents = new window.EventSource('/events');
+    pageEvents.addEventListener('ssisevents', function (e) {
+      if (suspendUpdates || !e.data) {
+        return;
+      }  
+      var tbody, cell, data, row, row1;
+      data = [JSON.parse(e.data)];
+      
+      prependGroupRows('consoleview', 
+          ['event', 'computer', 'operator', 'starttime', 'datacode',], 
+          ['message', 'endtime'], 
+          data);
+
+    });
+
+
+    pageEvents.onerror = function (e) {
+      /// The most common development error is a server restart caused by code change.
+      /// NOTE: This won't work in production as Nginx closes the connection periodically.
+      setTimeout(function() {
+        console.log('I am refreshing now!');
+        window.location.reload(true);
+      }, 300);
+    };
+
+    function ssisViewLoad() {
+      stsUtils.getJSON('/ssis', function(err, data) {
+        if (err) { return stsUtils.showMessage(err, 'ssisViewLoad', 5, false); }
+        prependGroupRows('consoleview', 
+          ['event', 'computer', 'operator', 'starttime', 'datacode',], 
+          ['source', 'message', 'starttime', 'endtime'], 
+          data);
+      });
+    }
+
+    function createDataRow(columnsChild, dataRow) {
+      var row2 = document.createElement('tr');
+      //tr.className = 'collapse e' + dataRow.executionid;
+      columnsChild.forEach(function(col) {
+        cell = document.createElement('td');
+        cell.textContent = dataRow[col];
+        cell.title = dataRow[col];
+        row2.appendChild(cell);
+        row2.className = 'collapse e' + dataRow.executionid;
+      });
+      return row2;
+    }
+
+    function prependGroupRows(table, columnsHeader, columnsChild, dataArray) {
+        var tbody, cell, rowID, row1, row2, rowOuter1, rowOuter2, heldEvents = {}, colCount = columnsHeader.length;
+        tbody = document.getElementById(table).querySelector('tbody');
+
+        dataArray.forEach(function(dataRow) {
+          if (dataRow.event === 'PackageEnd') {
+            if (heldEvents[dataRow.executionid]) {
+              heldEvents[dataRow.executionid].forEach(function(row2) {
+                rowOuter2 = tbody.insertRow(0);
+                rowOuter2.outerHTML = row2.outerHTML;
+              });
+            }
+            delete heldEvents[dataRow.executionid];
+            row1 = document.createElement('tr');
+            row1.id = 'e' + dataRow.executionid;
+            columnsHeader.forEach(function(col) {
+              cell = document.createElement('td');
+              cell.textContent = dataRow[col];
+              cell.title = dataRow[col];
+              /// add a style t osay its completion status
+              row1.appendChild(cell);
+            });
+            rowOuter1 = tbody.insertRow(0);
+            rowOuter1.innerHTML = row1.innerHTML;
+            rowOuter1.id = row1.id;
+
+            if (dataRow.datacode === 0) {
+              rowOuter1.style.backgroundColor = '#ccffcc';
+            }
+            if (dataRow.datacode === 1) {
+              rowOuter1.style.backgroundColor = '#ffcccc';
+            }
+            rowOuter1.addEventListener('click', function(e) {
+              var rowsToShow = document.getElementsByClassName(stsUtils.closest(e.target, 'tr').id);
+              [].map.call(rowsToShow, function(r) { r.classList.toggle('collapse'); }); 
+            });
+            /// add the held children, if any, and remove any start record
+          } else if (document.getElementById('e' + dataRow.executionid) !== null) {
+            /// add the child rows
+            row2 = createDataRow(columnsChild, dataRow);
+            rowOuter2 = tbody.insertRow(0);
+            rowOuter2.outerHTML = row2.outerHTML;
+
+          } else if (dataRow.event === 'PackageStartttt') {
+
+            /// Add the event then 
+            /// add the held children 
+
+          } else {
+            /// place children in a holding place for adding to a startevent later
+            heldEvents[dataRow.executionid] = [] || heldEvents[dataRow.executionid];
+            row2 = createDataRow(columnsChild, dataRow);
+            heldEvents[dataRow.executionid].push(row2);
+          }
+        });
+        /// Limit the size of the table
+        for(var i = tbody.children.length-1; i > 60; i--) {
+          tbody.children[i].parentElement.removeChild(tbody.children[i]);
+
+        }
+    }
+    function prependRows(table, columns, rows, dataArray) {
+
+        var tbody, cell, rowID, row1, row2, rowOuter1, rowOuter2, colCount = columns.length;
+        tbody = document.getElementById(table).querySelector('tbody');
+
+        dataArray.forEach(function(dataRow) {
+          rowID = Math.random().toString(36).substring(2, 9);
+          row1 = document.createElement('tr');
+          columns.forEach(function(col) {
+            cell = document.createElement('td');
+            cell.textContent = dataRow[col];
+            cell.title = dataRow[col];
+            row1.appendChild(cell);
+          });
+          rows.forEach(function(rrr) {
+            row2 = document.createElement('tr');
+
+            cell = document.createElement('td');
+            cell.textContent = dataRow[rrr];
+            cell.title = dataRow[rrr];
+            cell.colSpan = colCount;
+            cell.className = 'collapse row' + rowID;
+            row2.appendChild(cell);
+            rowOuter2 = tbody.insertRow(0);
+            rowOuter2.innerHTML = row2.innerHTML;
+            rowOuter2.className = 'collapse row' + rowID;
+
+          });
+          rowOuter1 = tbody.insertRow(0);
+          rowOuter1.innerHTML = row1.innerHTML; /// Hits DOM a bit less than inserting row earlier but not tested to be faster.
+          rowOuter1.id = rowID;
+          rowOuter1.addEventListener('click', function(e) {
+            var rowsToShow = document.getElementsByClassName('row' + stsUtils.closest(e.target, 'tr').id);
+            [].map.call(rowsToShow, function(r) { r.classList.toggle('collapse'); }); 
+          });
+
+        });
+        /// Limit the size of the table
+        for(var i = tbody.children.length-1; i > 60; i--) {
+          tbody.children[i].parentElement.removeChild(tbody.children[i]);
+
+        }
+    }
+
+    /*window.onerror = function (msg, url, lineNo, columnNo, error) {
+      var string = msg.toLowerCase();
+      var substring = "script error";
+      if (string.indexOf(substring) > -1){
+        console.log('Script Error: See Browser Console for Detail');
+      } else {
+        var message = [
+            'Message: ' + msg,
+            'URL: ' + url,
+            'Line: ' + lineNo,
+            'Column: ' + columnNo,
+            'Error object: ' + JSON.stringify(error)
+        ].join(' - ');
+
+        console.log(message);
+      }
+
+      return false;
+    };*/
+
+    document.addEventListener('DOMContentLoaded', function () {
+      //loadCharts();
+      ssisViewLoad() ;
+      document.getElementById('btnSuspend').addEventListener('click', function(e) {
+        if (suspendUpdates) {
+          suspendUpdates = undefined;
+          e.target.value = 'Suspend updates';
+        } else {
+          suspendUpdates = true;
+          e.target.value = 'Resume updates'; 
+        }
+      });
+      /*document.getElementById('btnSaveTarget').addEventListener('click', function(e) {
+        e.target.style.backgroundColor = 'green';
+        fetch('/target', { method: 'POST',
+            body: JSON.stringify({
+              target: document.getElementById('txtTarget').value,
+              hostHeader: document.getElementById('txtHostHeader').value,
+            }),
+            headers: new Headers({
+              'Content-Type': 'application/json'
+            })
+          })
+          .then(function(response) {
+            if (!response.ok) {
+              throw Error(response.statusText);
+            }
+            return response;
+          })
+          .then(function(response) {
+            return response.json();
+          })
+          .then(function(bb) {
+            e.target.style.backgroundColor = '';
+            document.getElementById('txtHostHeader').value = bb.hostHeader;
+          })
+          .catch(function(err) {
+            e.target.style.backgroundColor = 'red';
+            console.log(err);
+          });
+      });*/
+      
+    });
+
+    </script>
+    </body>
+    </html>
